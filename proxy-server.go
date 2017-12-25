@@ -21,6 +21,13 @@ import (
   "github.com/google/gopacket/layers"
 )
 
+func xor42(data []byte) []byte {
+  for i, b := range data {
+    data[i] = b ^ 42
+  }
+  return data
+}
+
 var connection net.Conn
 
 type Proxy struct {
@@ -157,7 +164,7 @@ func handleRepliesFromIPConn(ipconn *net.IPConn, originalIP net.IP, originalPort
     fmt.Println("Sending:")
     fmt.Println(hex.EncodeToString(modPacket))
 
-    _, err = io.Copy(connection, bytes.NewReader(modPacket))
+    _, err = io.Copy(connection, bytes.NewReader(xor42(modPacket)))
     if err != nil {
       fmt.Println(err)
       break
@@ -352,11 +359,17 @@ func main() {
       os.Exit(0)
     }()
 
-
     flag.Parse();
     log.SetLevel(log.InfoLevel)
 
-    NewProxy(*remoteAddr).Start()
+    p := NewProxy(*remoteAddr)
+
+    if os.Geteuid() != 0 {
+      p.log.Infoln("Lower ports may be not accessible without root rights.")
+    }
+
+    p.Start()
+
     fmt.Println("Server started.")
     select{}
 }
