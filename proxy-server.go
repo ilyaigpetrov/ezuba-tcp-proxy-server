@@ -80,6 +80,9 @@ func (p *Proxy) Start() error {
       }
       addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
       if !ok {
+	if int(tcp.DstPort) != 22 {
+	  fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+	}
         continue
       }
       fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
@@ -368,16 +371,19 @@ func (p *Proxy) handle(conn net.Conn) {
         siteConnection = nil
       }
       if siteConnection == nil {
-        siteConnection, err := net.Dial("ip:tcp", dst)
+        siteConnection, err := net.Dial("tcp", dst)
         if err != nil {
           fmt.Println(err)
           return
         }
         srcToSiteConn[src] = siteConnection
-        openPortToClientAddr[getSrcPortFromConnection(siteConnection)] = clientAddr{ ip: savedIP, port: savedPort }
+	openPort := getSrcPortFromConnection(siteConnection)
+        openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
+	fmt.Printf("Added %s to open ports\n", openPort)
 
         go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
       } else {
+	fmt.Println("Sending payload to site...")
         _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
         if err != nil {
           fmt.Println(err)
