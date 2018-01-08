@@ -17,6 +17,7 @@ import (
   "syscall"
   "github.com/google/gopacket"
   "github.com/google/gopacket/layers"
+  "time"
 
   log "github.com/Sirupsen/logrus"
 )
@@ -209,7 +210,11 @@ func handleRepliesFromSiteConn(siteConnection net.Conn, originalIP net.IP, origi
   for {
     _, err := siteConnection.Read(packetBuffer)
     if err != nil {
-      fmt.Println(err)
+      if err == io.EOF {
+        time.Sleep(time.Second * 2) // Wait for FIN packets to pass.
+      } else {
+        fmt.Println(err)
+      }
       break
     }
   }
