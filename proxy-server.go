@@ -55,6 +55,39 @@ func NewProxy(from string) *Proxy {
 
 }
 
+func processPacket(packetData []byte) {
+
+  _, ip, tcp, recompile, err := parseTCPPacket(packetData)
+  if err != nil {
+    fmt.Println(err)
+    return
+  }
+  addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
+  if !ok {
+    if int(tcp.DstPort) != 22 {
+      fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+      if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
+        openPortToSynAck[tcp.DstPort.String()] = packetData
+      }
+    }
+    return
+  }
+  fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+
+  ip.DstIP = addr.ip
+  tcp.DstPort = addr.port
+  packetData, err = recompile()
+  if err != nil {
+    fmt.Println(err)
+    return
+  }
+  _, err = io.Copy(proxyConnection, bytes.NewReader(packetData))
+  if err != nil {
+    fmt.Println(err)
+  }
+
+}
+
 func (p *Proxy) Start() error {
   p.log.Infoln("Starting proxy")
 
@@ -73,30 +106,7 @@ func (p *Proxy) Start() error {
         break
       }
       packetData = packetData[:n]
-      _, ip, tcp, recompile, err := parseTCPPacket(packetData)
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
-      addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
-      if !ok {
-	if int(tcp.DstPort) != 22 {
-	  fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-	}
-        continue
-      }
-      fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-      ip.DstIP = addr.ip
-      tcp.DstPort = addr.port
-      packetData, err = recompile()
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
-      _, err = io.Copy(proxyConnection, bytes.NewReader(packetData))
-      if err != nil {
-        fmt.Println(err)
-      }
+      processPacket(packetData)
 
     }
 
@@ -189,6 +199,7 @@ func GetOutboundIP() net.IP {
 var myOutboundIP = GetOutboundIP()
 var srcToSiteConn = make(map[string]net.Conn)
 var openPortToClientAddr = make(map[string]clientAddr)
+var openPortToSynAck = make(map[string][]byte) // Attack is possible by site which bombs us with syn-ack packets
 
 var packetBuffer = make([]byte, 65535)
 
@@ -377,13 +388,14 @@ func (p *Proxy) handle(conn net.Conn) {
           return
         }
         srcToSiteConn[src] = siteConnection
-	openPort := getSrcPortFromConnection(siteConnection)
+        openPort := getSrcPortFromConnection(siteConnection)
         openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
-	fmt.Printf("Added %s to open ports\n", openPort)
+        fmt.Printf("Added %s to open ports\n", openPort)
+        processPacket(openPortToSynAck[openPort])
 
         go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
       } else {
-	fmt.Println("Sending payload to site...")
+        fmt.Println("Sending payload to site...")
         _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
         if err != nil {
           fmt.Println(err)
