@@ -10,15 +10,15 @@ import (
   "strings"
   "bytes"
   "golang.org/x/net/ipv4"
-  //"encoding/hex"
+  "encoding/hex"
   "os"
   "os/signal"
   "errors"
   "syscall"
-  "github.com/google/gopacket"
-  "github.com/google/gopacket/layers"
 
   log "github.com/Sirupsen/logrus"
+  "github.com/google/gopacket"
+  "github.com/google/gopacket/layers"
 )
 
 func xor42(data []byte) []byte {
@@ -37,11 +37,6 @@ type Proxy struct {
   log  *log.Entry
 }
 
-type clientAddr struct {
-  ip net.IP
-  port layers.TCPPort
-}
-
 func NewProxy(from string) *Proxy {
 
   log.SetLevel(log.InfoLevel)
@@ -57,48 +52,7 @@ func NewProxy(from string) *Proxy {
 
 func (p *Proxy) Start() error {
   p.log.Infoln("Starting proxy")
-
-  rawTCPSocket, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_TCP)
-  if err != nil {
-    panic(err)
-  }
-  go func(){
-
-    defer syscall.Close(rawTCPSocket)
-    for {
-      packetData := make([]byte, 65535)
-      n, _, err := syscall.Recvfrom(rawTCPSocket, packetData, 0)
-      if err != nil {
-        fmt.Println(err)
-        break
-      }
-      packetData = packetData[:n]
-      _, ip, tcp, recompile, err := parseTCPPacket(packetData)
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
-      addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
-      if !ok {
-        continue
-      }
-      fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-      ip.DstIP = addr.ip
-      tcp.DstPort = addr.port
-      packetData, err = recompile()
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
-      _, err = io.Copy(proxyConnection, bytes.NewReader(packetData))
-      if err != nil {
-        fmt.Println(err)
-      }
-
-    }
-
-  }()
-
+  var err error
   p.fromTCP, err = net.ResolveTCPAddr("tcp", p.from)
   if (err != nil) {
     panic(err)
@@ -184,16 +138,32 @@ func GetOutboundIP() net.IP {
 }
 
 var myOutboundIP = GetOutboundIP()
-var srcToSiteConn = make(map[string]net.Conn)
-var openPortToClientAddr = make(map[string]clientAddr)
+var srcToSiteConn = make(map[string]*net.Conn)
 
-var packetBuffer = make([]byte, 65535)
-
-func handleRepliesFromSiteConn(siteConnection net.Conn, originalIP net.IP, originalPort layers.TCPPort, src string, closeSiteConnection func(net.Conn)) {
+func handleRepliesFromIPConn(siteConnection *net.Conn, originalIP net.IP, originalPort layers.TCPPort, src string, closeSiteConnection func(net.Conn)) {
 
   defer closeSiteConnection(siteConnection)
   for {
-    _, err := siteConnection.Read(packetBuffer)
+    packetData := make([]byte, 65535)
+    siteConnection.Read()
+
+    _, ip, tcp, recompilePacket, err := parseTCPPacket(packetData)
+    if err != nil {
+      fmt.Println(err)
+      break
+    }
+
+    ip.DstIP = originalIP
+    tcp.DstPort = originalPort
+    modPacket, err := recompilePacket()
+    if err != nil {
+      fmt.Println(err)
+      break
+    }
+    fmt.Println("Sending:")
+    fmt.Println(hex.EncodeToString(modPacket))
+
+    _, err = io.Copy(proxyConnection, bytes.NewReader(xor42(modPacket)))
     if err != nil {
       fmt.Println(err)
       break
@@ -257,13 +227,6 @@ func sendViaSocket(packetData []byte, toIP net.IP) error {
 
 }
 
-func getSrcPortFromConnection(conn net.Conn) string {
-
-  parts := strings.Split( conn.LocalAddr().String(), ":" )
-  return parts[1]
-
-}
-
 func (p *Proxy) handle(conn net.Conn) {
 
   defer conn.Close()
@@ -306,7 +269,7 @@ func (p *Proxy) handle(conn net.Conn) {
 
     go func(){
 
-      _, ip, tcp, _, err := parseTCPPacket(packetData)
+      _, ip, tcp, recompilePacket, err := parseTCPPacket(packetData)
       if err != nil {
         fmt.Println(err)
         return
@@ -327,17 +290,15 @@ func (p *Proxy) handle(conn net.Conn) {
         return
       }
 
-      closeSiteConnection := func(siteConnection net.Conn) {
+      closeSiteConnection := func(con net.Conn) {
 
-        srcPort := getSrcPortFromConnection(siteConnection)
-        delete(openPortToClientAddr, srcPort)
-        siteConnection.Close()
+        con.Close()
         delete(srcToSiteConn, src)
 
         ip.SrcIP = ip.DstIP
-        tcp.SrcPort = tcp.DstPort
+        ip.SrcPort = ip.DstPort
         ip.DstIP = savedIP
-        tcp.DstPort = savedPort
+        ip.DstPort = savedPort
 
         newTcp := &layers.TCP{FIN: true}
 
@@ -368,15 +329,13 @@ func (p *Proxy) handle(conn net.Conn) {
         siteConnection = nil
       }
       if siteConnection == nil {
-        siteConnection, err := net.Dial("ip:tcp", dst)
+        siteConnection, err := net.Dial("ip:tcp", nil, dst)
         if err != nil {
           fmt.Println(err)
           return
         }
         srcToSiteConn[src] = siteConnection
-        openPortToClientAddr[getSrcPortFromConnection(siteConnection)] = clientAddr{ ip: savedIP, port: savedPort }
-
-        go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
+        go handleRepliesFromIPConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
       } else {
         _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
         if err != nil {
