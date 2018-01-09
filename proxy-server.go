@@ -13,12 +13,12 @@ import (
   //"encoding/hex"
   "os"
   "os/signal"
-  "errors"
   "syscall"
   "github.com/google/gopacket"
   "github.com/google/gopacket/layers"
   "time"
 
+  "github.com/ilyaigpetrov/parse-tcp-go"
   log "github.com/Sirupsen/logrus"
 )
 
@@ -58,14 +58,18 @@ func NewProxy(from string) *Proxy {
 
 func processPacket(packetData []byte) {
 
-  _, ip, tcp, recompile, err := parseTCPPacket(packetData)
+  packet, err := parseTCP.ParseTCPPacket(packetData)
+  ip := packet.IP
+  tcp := packet.TCP
+  recompile := packet.Recompile
+
   if err != nil {
     fmt.Println(err)
     return
   }
   addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
   if !ok {
-    if int(tcp.DstPort) != 22 || ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
+    if int(tcp.DstPort) != 22 || !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
       fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
@@ -221,44 +225,6 @@ func handleRepliesFromSiteConn(siteConnection net.Conn, originalIP net.IP, origi
 
 }
 
-func parseTCPPacket(packetData []byte) (packet gopacket.Packet, ip *layers.IPv4, tcp *layers.TCP, recompilePacket func() ([]byte, error), err error) {
-
-  packet = gopacket.NewPacket(packetData, layers.LayerTypeIPv4, gopacket.Default)
-
-  ipLayer := packet.Layer(layers.LayerTypeIPv4)
-  if ipLayer == nil {
-    err = errors.New("No IP layer!")
-    return
-  }
-  ip = ipLayer.(*layers.IPv4)
-
-  tcpLayer := packet.Layer(layers.LayerTypeTCP)
-  if tcpLayer == nil {
-    err = errors.New("No TCP layer!")
-    return
-  }
-  tcp = tcpLayer.(*layers.TCP)
-
-  recompilePacket = func() ([]byte, error) {
-
-    options := gopacket.SerializeOptions{
-      ComputeChecksums: true,
-      FixLengths: true,
-    }
-    newBuffer := gopacket.NewSerializeBuffer()
-    tcp.SetNetworkLayerForChecksum(ip)
-    err := gopacket.SerializePacket(newBuffer, options, packet)
-    if err != nil {
-      return nil, err
-    }
-    return newBuffer.Bytes(), nil
-
-  }
-
-  return
-
-}
-
 func sendViaSocket(packetData []byte, toIP net.IP) error {
 
   s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
@@ -325,7 +291,9 @@ func (p *Proxy) handle(conn net.Conn) {
 
     go func(){
 
-      _, ip, tcp, _, err := parseTCPPacket(packetData)
+      packet, err := parseTCP.ParseTCPPacket(packetData)
+      ip := packet.IP
+      tcp := packet.TCP
       if err != nil {
         fmt.Println(err)
         return

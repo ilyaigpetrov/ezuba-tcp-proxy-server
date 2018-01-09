@@ -15,25 +15,37 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/ilyaigpetrov/parse-tcp-go"
+  packages = ["."]
+  revision = "b3ec8b29dc0bebb32cda43d900c5523bd47a4e64"
+
+[[projects]]
+  branch = "master"
   name = "golang.org/x/crypto"
   packages = ["ssh/terminal"]
-  revision = "d585fd2cc9195196078f516b69daff6744ef5e84"
+  revision = "0fcca4842a8d74bfddc2c96a073bd2a4d2a7a2e8"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/net"
   packages = ["bpf","internal/iana","internal/socket","ipv4"]
-  revision = "d866cfc389cec985d6fda2859936a575a55a3ab6"
+  revision = "434ec0c7fe3742c984919a691b2018a6e9694425"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix","windows"]
-  revision = "571f7bbbe08da2a8955aed9d4db316e78630e9a3"
+  revision = "d38bf781f16e180a1b2ad82697d2f81d7b7ecfac"
+
+[[projects]]
+  name = "gopkg.in/oleiade/reflections.v1"
+  packages = ["."]
+  revision = "2b6ec3da648e3e834dc41bad8d9ed7f2dc6a9496"
+  version = "v1.0.0"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "142d8a42f2b826aae10d969627ba17220116af963da8a01bcba17a018cdbccf4"
+  inputs-digest = "fb57dcfbba91a0fc4291a6350543aebbb96382311b4b50f523c1e6329c7229bc"
   solver-name = "gps-cdcl"
   solver-version = 1
