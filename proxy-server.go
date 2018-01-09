@@ -333,6 +333,7 @@ func (p *Proxy) handle(conn net.Conn) {
         tcp.DstPort = savedPort
 
         newTcp := &layers.TCP{FIN: true}
+        newTcp.DstPort = savedPort
 
         options := gopacket.SerializeOptions{
           ComputeChecksums: true,
