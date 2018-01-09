@@ -65,7 +65,7 @@ func processPacket(packetData []byte) {
   }
   addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
   if !ok {
-    if int(tcp.DstPort) != 22 {
+    if int(tcp.DstPort) != 22 || ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
       fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
