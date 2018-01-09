@@ -8,6 +8,7 @@ import (
   "gopkg.in/oleiade/reflections.v1"
   "strings"
   "math"
+  "encoding/hex"
 )
 
 type Packet struct {
@@ -25,6 +26,7 @@ func ParseTCPPacket(packetData []byte) (packet Packet, err error) {
   ipLayer := packet.Gopacket.Layer(layers.LayerTypeIPv4)
   if ipLayer == nil {
     err = errors.New("No IP layer!")
+    fmt.Println("DUMP", hex.Dump(packetData))
     return
   }
   packet.IP = ipLayer.(*layers.IPv4)

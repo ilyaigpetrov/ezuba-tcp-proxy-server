@@ -10,7 +10,7 @@ import (
   "strings"
   "bytes"
   "golang.org/x/net/ipv4"
-  //"encoding/hex"
+  "encoding/hex"
   "os"
   "os/signal"
   "syscall"
@@ -69,15 +69,20 @@ func processPacket(packetData []byte) {
   }
   addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
   if !ok {
-    if int(tcp.DstPort) != 22 || !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
+    if int(tcp.DstPort) != 22 && !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
       fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+      fmt.Printf("OUT IP:%s\n", myOutboundIP.String())
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
+	fmt.Printf("Added syn ack for %s\n", tcp.DstPort.String())
+	fmt.Printf("2.Added syn ack for %s\n", string(tcp.DstPort))
       }
     }
     return
   }
-  fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+  //fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+  fmt.Println("BACK:")
+  packet.Print()
 
   ip.DstIP = addr.ip
   tcp.DstPort = addr.port
@@ -86,6 +91,7 @@ func processPacket(packetData []byte) {
     fmt.Println(err)
     return
   }
+  fmt.Println("send back:", hex.Dump(packetData))
   _, err = io.Copy(proxyConnection, bytes.NewReader(packetData))
   if err != nil {
     fmt.Println(err)
@@ -289,7 +295,6 @@ func (p *Proxy) handle(conn net.Conn) {
 
     fmt.Printf("Packet to %s\n", header.Dst)
 
-    go func(){
 
       packet, err := parseTCP.ParseTCPPacket(packetData)
       ip := packet.IP
@@ -317,6 +322,7 @@ func (p *Proxy) handle(conn net.Conn) {
       closeSiteConnection := func(siteConnection net.Conn) {
 
         srcPort := getSrcPortFromConnection(siteConnection)
+	fmt.Printf("CLOSE CONNECTION for port %s\n", srcPort)
         delete(openPortToClientAddr, srcPort)
         siteConnection.Close()
         delete(srcToSiteConn, src)
@@ -355,11 +361,16 @@ func (p *Proxy) handle(conn net.Conn) {
         siteConnection = nil
       }
       if siteConnection == nil {
+	fmt.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
         siteConnection, err := net.Dial("tcp", dst)
         if err != nil {
           fmt.Println(err)
           return
         }
+	if siteConnection == nil {
+	  fmt.Println("Site con is nil")
+	  return
+	}
         srcToSiteConn[src] = siteConnection
         openPort := getSrcPortFromConnection(siteConnection)
         openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
@@ -369,6 +380,7 @@ func (p *Proxy) handle(conn net.Conn) {
         go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
       } else {
         fmt.Println("Sending payload to site...")
+	packet.Print()
         _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
         if err != nil {
           fmt.Println(err)
@@ -376,7 +388,6 @@ func (p *Proxy) handle(conn net.Conn) {
         }
       }
 
-    }()
 
   }
 
