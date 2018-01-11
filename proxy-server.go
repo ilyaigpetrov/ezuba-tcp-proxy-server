@@ -29,7 +29,7 @@ func xor42(data []byte) []byte {
   return data
 }
 
-var proxyConnection net.Conn
+var clientConnection net.Conn
 
 type Proxy struct {
   from string
@@ -92,7 +92,7 @@ func processPacket(packetData []byte) {
     return
   }
   fmt.Println("send back:", hex.Dump(packetData))
-  _, err = io.Copy(proxyConnection, bytes.NewReader(packetData))
+  _, err = io.Copy(clientConnection, bytes.NewReader(packetData))
   if err != nil {
     fmt.Println(err)
   }
@@ -152,19 +152,19 @@ func (p *Proxy) run(listener net.TCPListener) {
       return
     default:
       var err error
-      proxyConnection, err = listener.Accept()
-      if proxyConnection == nil {
-        p.log.WithField("err", err).Errorln("Nil proxyConnection")
+      clientConnection, err = listener.Accept()
+      if clientConnection == nil {
+        p.log.WithField("err", err).Errorln("Nil clientConnection")
         panic(err)
       }
-      la := proxyConnection.LocalAddr()
+      la := clientConnection.LocalAddr()
       if (la == nil) {
         panic("Connection lost!")
       }
       fmt.Printf("Connection from %s\n", la.String())
 
       if err == nil {
-        go p.handle(proxyConnection)
+        go p.handle(clientConnection)
       } else {
         p.log.WithField("err", err).Errorln("Error accepting conn")
       }
@@ -293,101 +293,99 @@ func (p *Proxy) handle(conn net.Conn) {
 
     buf = buf[header.TotalLen:]
 
-    fmt.Printf("Packet to %s\n", header.Dst)
+    packet, err := parseTCP.ParseTCPPacket(packetData)
+    ip := packet.IP
+    tcp := packet.TCP
+    if err != nil {
+      fmt.Println(err)
+      return
+    }
+    packet.Print()
+
+    dstIP := ip.DstIP
+    if isLocalIP(dstIP.String()) {
+      fmt.Printf("DESTINATION IS SELF: %s\n", dstIP.String())
+      return
+    }
+
+    savedIP := ip.SrcIP
+    savedPort := tcp.SrcPort
+    src := fmt.Sprintf("%s:%d", savedIP.String(), tcp.SrcPort)
+    dst := fmt.Sprintf("%s:%d", dstIP.String(), tcp.DstPort)
+
+    if len(tcp.Payload) == 0 && !tcp.SYN {
+      return
+    }
+
+    closeSiteConnection := func(siteConnection net.Conn) {
+
+      srcPort := getSrcPortFromConnection(siteConnection)
+      fmt.Printf("CLOSE CONNECTION for port %s\n", srcPort)
+      delete(openPortToClientAddr, srcPort)
+      siteConnection.Close()
+      delete(srcToSiteConn, src)
+
+      ip.SrcIP = ip.DstIP
+      tcp.SrcPort = tcp.DstPort
+      ip.DstIP = savedIP
+      tcp.DstPort = savedPort
+
+      newTcp := &layers.TCP{FIN: true}
+      newTcp.DstPort = savedPort
+
+      options := gopacket.SerializeOptions{
+        ComputeChecksums: true,
+        FixLengths: true,
+      }
+
+      newTcp.SetNetworkLayerForChecksum(ip)
+
+      buffer := gopacket.NewSerializeBuffer()
+      gopacket.SerializeLayers(buffer, options,
+          ip,
+          newTcp,
+      )
+      outgoingPacket := buffer.Bytes()
+      _, err = io.Copy(clientConnection, bytes.NewReader(outgoingPacket))
+      if err != nil {
+        fmt.Println(err)
+      }
+
+    }
 
 
-      packet, err := parseTCP.ParseTCPPacket(packetData)
-      ip := packet.IP
-      tcp := packet.TCP
+    siteConnection := srcToSiteConn[src]
+    if tcp.SYN && siteConnection != nil {
+      closeSiteConnection(siteConnection)
+      siteConnection = nil
+    }
+    if siteConnection == nil {
+      fmt.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
+      siteConnection, err := net.Dial("tcp", dst)
       if err != nil {
         fmt.Println(err)
         return
       }
-
-      dstIP := ip.DstIP
-      if isLocalIP(dstIP.String()) {
-        fmt.Printf("DESTINATION IS SELF: %s\n", dstIP.String())
-        return
-      }
-
-      savedIP := ip.SrcIP
-      savedPort := tcp.SrcPort
-      src := fmt.Sprintf("%s:%d", savedIP.String(), tcp.SrcPort)
-      dst := fmt.Sprintf("%s:%d", dstIP.String(), tcp.DstPort)
-
-      if len(tcp.Payload) == 0 && !tcp.SYN {
-        return
-      }
-
-      closeSiteConnection := func(siteConnection net.Conn) {
-
-        srcPort := getSrcPortFromConnection(siteConnection)
-	fmt.Printf("CLOSE CONNECTION for port %s\n", srcPort)
-        delete(openPortToClientAddr, srcPort)
-        siteConnection.Close()
-        delete(srcToSiteConn, src)
-
-        ip.SrcIP = ip.DstIP
-        tcp.SrcPort = tcp.DstPort
-        ip.DstIP = savedIP
-        tcp.DstPort = savedPort
-
-        newTcp := &layers.TCP{FIN: true}
-        newTcp.DstPort = savedPort
-
-        options := gopacket.SerializeOptions{
-          ComputeChecksums: true,
-          FixLengths: true,
-        }
-
-        newTcp.SetNetworkLayerForChecksum(ip)
-
-        buffer := gopacket.NewSerializeBuffer()
-        gopacket.SerializeLayers(buffer, options,
-            ip,
-            newTcp,
-        )
-        outgoingPacket := buffer.Bytes()
-        _, err = io.Copy(proxyConnection, bytes.NewReader(outgoingPacket))
-        if err != nil {
-          fmt.Println(err)
-        }
-
-      }
-
-
-      siteConnection := srcToSiteConn[src]
-      if tcp.SYN && siteConnection != nil {
-        closeSiteConnection(siteConnection)
-        siteConnection = nil
-      }
       if siteConnection == nil {
-	fmt.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
-        siteConnection, err := net.Dial("tcp", dst)
-        if err != nil {
-          fmt.Println(err)
-          return
-        }
-	if siteConnection == nil {
-	  fmt.Println("Site con is nil")
-	  return
-	}
-        srcToSiteConn[src] = siteConnection
-        openPort := getSrcPortFromConnection(siteConnection)
-        openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
-        fmt.Printf("Added %s to open ports\n", openPort)
-        processPacket(openPortToSynAck[openPort])
-
-        go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
-      } else {
-        fmt.Println("Sending payload to site...")
-	packet.Print()
-        _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
-        if err != nil {
-          fmt.Println(err)
-          closeSiteConnection(siteConnection)
-        }
+        fmt.Println("Site con is nil")
+        return
       }
+      srcToSiteConn[src] = siteConnection
+      openPort := getSrcPortFromConnection(siteConnection)
+      openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
+      fmt.Printf("Added %s to open ports\n", openPort)
+      processPacket(openPortToSynAck[openPort])
+
+      go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
+    } else {
+      fmt.Println("Sending payload to site...")
+      packet.Print()
+      _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
+      if err != nil {
+        fmt.Println(err)
+        closeSiteConnection(siteConnection)
+      }
+    }
 
 
   }
