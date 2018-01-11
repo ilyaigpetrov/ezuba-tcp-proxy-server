@@ -74,14 +74,13 @@ func processPacket(packetData []byte) {
       fmt.Printf("OUT IP:%s\n", myOutboundIP.String())
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
-	fmt.Printf("Added syn ack for %s\n", tcp.DstPort.String())
-	fmt.Printf("2.Added syn ack for %s\n", string(tcp.DstPort))
+        fmt.Printf("Added syn ack for %s\n", tcp.DstPort.String())
+        fmt.Printf("2.Added syn ack for %s\n", string(tcp.DstPort))
       }
     }
     return
   }
-  //fmt.Printf("From %s:%d to %s:%d\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-  fmt.Println("BACK:")
+  fmt.Println("SENDING BACK:")
   packet.Print()
 
   ip.DstIP = addr.ip
@@ -300,6 +299,7 @@ func (p *Proxy) handle(conn net.Conn) {
       fmt.Println(err)
       return
     }
+    fmt.Println("RECEIVED:")
     packet.Print()
 
     dstIP := ip.DstIP
@@ -361,6 +361,7 @@ func (p *Proxy) handle(conn net.Conn) {
     }
     if siteConnection == nil {
       fmt.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
+      fmt.Printf("Dialing %s...\n", dst)
       siteConnection, err := net.Dial("tcp", dst)
       if err != nil {
         fmt.Println(err)
