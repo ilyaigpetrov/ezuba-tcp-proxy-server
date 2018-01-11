@@ -74,7 +74,7 @@ func ParseTCPPacket(packetData []byte) (packet Packet, err error) {
 
   packet.Print = func(payloadLimits ...int) {
 
-    fmt.Printf("Packet from %s:%d to %s:%d %d", ip.SrcIP.String(), tcp.SrcPort, ip.DstIP.String(), tcp.DstPort, tcp.Seq)
+    fmt.Printf("Packet from %s:%d to %s:%d seq=%d ack=%d", ip.SrcIP.String(), tcp.SrcPort, ip.DstIP.String(), tcp.DstPort, tcp.Seq, tcp.Ack)
     flags := strings.Split("FIN SYN RST PSH ACK URG ECE CWR NS", " ")
     for _, flag := range flags {
       val, err := reflections.GetField(tcp, flag)
@@ -86,7 +86,7 @@ func ParseTCPPacket(packetData []byte) (packet Packet, err error) {
       }
     }
     fmt.Printf("\n")
-    payloadLimit := 1000
+    payloadLimit := 100
     if len(payloadLimits) > 0 {
       payloadLimit = payloadLimits[0]
     }
