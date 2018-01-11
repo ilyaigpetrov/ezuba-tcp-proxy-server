@@ -17,7 +17,7 @@
   branch = "master"
   name = "github.com/ilyaigpetrov/parse-tcp-go"
   packages = ["."]
-  revision = "210a0c10359a6dcc8485f8fe0fa367eabc5da494"
+  revision = "fd545851ac826edbf6fac3f072c56ded7421e2bc"
 
 [[projects]]
   branch = "master"

@@ -10,7 +10,7 @@ import (
   "strings"
   "bytes"
   "golang.org/x/net/ipv4"
-  "encoding/hex"
+  //"encoding/hex"
   "os"
   "os/signal"
   "syscall"
@@ -43,6 +43,8 @@ type clientAddr struct {
   port layers.TCPPort
 }
 
+var clientIP string
+
 func NewProxy(from string) *Proxy {
 
   log.SetLevel(log.InfoLevel)
@@ -69,9 +71,12 @@ func processPacket(packetData []byte) {
   }
   addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
   if !ok {
-    if int(tcp.DstPort) != 22 && !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) {
+    if
+        int(tcp.DstPort) != 22 &&
+        !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) &&
+        !ip.SrcIP.Equal(net.ParseIP(clientIP)) {
       fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-      fmt.Printf("OUT IP:%s\n", myOutboundIP.String())
+      packet.Print(100)
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
         fmt.Printf("Added syn ack for %s\n", tcp.DstPort.String())
@@ -81,7 +86,7 @@ func processPacket(packetData []byte) {
     return
   }
   fmt.Println("SENDING BACK:")
-  packet.Print()
+  packet.Print(100)
 
   ip.DstIP = addr.ip
   tcp.DstPort = addr.port
@@ -90,7 +95,6 @@ func processPacket(packetData []byte) {
     fmt.Println(err)
     return
   }
-  fmt.Println("send back:", hex.Dump(packetData))
   _, err = io.Copy(clientConnection, bytes.NewReader(packetData))
   if err != nil {
     fmt.Println(err)
@@ -160,9 +164,12 @@ func (p *Proxy) run(listener net.TCPListener) {
       if (la == nil) {
         panic("Connection lost!")
       }
-      fmt.Printf("Connection from %s\n", la.String())
+      fmt.Printf("Connection from %s to %s\n", la.String(), clientConnection.RemoteAddr().String())
 
       if err == nil {
+	clientIP = clientConnection.RemoteAddr().String()
+	parts := strings.Split(clientIP, ":")
+	clientIP = parts[0]
         go p.handle(clientConnection)
       } else {
         p.log.WithField("err", err).Errorln("Error accepting conn")
@@ -300,7 +307,7 @@ func (p *Proxy) handle(conn net.Conn) {
       return
     }
     fmt.Println("RECEIVED:")
-    packet.Print()
+    packet.Print(100)
 
     dstIP := ip.DstIP
     if isLocalIP(dstIP.String()) {
@@ -380,7 +387,7 @@ func (p *Proxy) handle(conn net.Conn) {
       go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
     } else {
       fmt.Println("Sending payload to site...")
-      packet.Print()
+      packet.Print(100)
       _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
       if err != nil {
         fmt.Println(err)
