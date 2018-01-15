@@ -10,7 +10,7 @@ import (
   "strings"
   "bytes"
   "golang.org/x/net/ipv4"
-  //"encoding/hex"
+  "encoding/hex"
   "os"
   "os/signal"
   "syscall"
@@ -19,8 +19,16 @@ import (
   "time"
 
   "github.com/ilyaigpetrov/parse-tcp-go"
-  log "github.com/Sirupsen/logrus"
+  "github.com/Sirupsen/logrus"
+  "log"
 )
+
+var errlog = log.New(os.Stderr,
+    "ERROR: ",
+    log.Lshortfile)
+
+var infolog = log.New(os.Stdout,
+    "", log.Lshortfile)
 
 func xor42(data []byte) []byte {
   for i, b := range data {
@@ -35,7 +43,7 @@ type Proxy struct {
   from string
   fromTCP *net.TCPAddr
   done chan struct{}
-  log  *log.Entry
+  log  *logrus.Entry
 }
 
 type clientAddr struct {
@@ -47,11 +55,11 @@ var clientIP string
 
 func NewProxy(from string) *Proxy {
 
-  log.SetLevel(log.InfoLevel)
+  logrus.SetLevel(logrus.InfoLevel)
   return &Proxy{
     from: from,
     done: make(chan struct{}),
-    log: log.WithFields(log.Fields{
+    log: logrus.WithFields(logrus.Fields{
       "from": from,
     }),
   }
@@ -61,43 +69,44 @@ func NewProxy(from string) *Proxy {
 func processPacket(packetData []byte) {
 
   packet, err := parseTCP.ParseTCPPacket(packetData)
+  if err != nil {
+    errlog.Println(err)
+    errlog.Println(hex.Dump(packetData))
+    return
+  }
   ip := packet.IP
   tcp := packet.TCP
   recompile := packet.Recompile
-
-  if err != nil {
-    fmt.Println(err)
-    return
-  }
   addr, ok := openPortToClientAddr[fmt.Sprintf("%d", tcp.DstPort)]
   if !ok {
     if
         int(tcp.DstPort) != 22 &&
         !ip.SrcIP.Equal(net.ParseIP("169.254.169.254")) &&
         !ip.SrcIP.Equal(net.ParseIP(clientIP)) {
-      fmt.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+      infolog.Printf("Reject: %s:%d to %s:%d<!\n", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
       packet.Print(100)
       if tcp.SYN && tcp.ACK && ip.DstIP.Equal(myOutboundIP) {
         openPortToSynAck[tcp.DstPort.String()] = packetData
-        fmt.Printf("Added syn ack for %s\n", tcp.DstPort.String())
-        fmt.Printf("2.Added syn ack for %s\n", string(tcp.DstPort))
+        infolog.Printf("Added syn ack for %s\n", tcp.DstPort.String())
+        infolog.Printf("2.Added syn ack for %s\n", string(tcp.DstPort))
       }
     }
     return
   }
-  fmt.Println("SENDING BACK:")
+  infolog.Println("SENDING BACK:")
   packet.Print(100)
 
   ip.DstIP = addr.ip
   tcp.DstPort = addr.port
   packetData, err = recompile()
   if err != nil {
-    fmt.Println(err)
+    errlog.Println(err)
     return
   }
   _, err = io.Copy(clientConnection, bytes.NewReader(packetData))
+  //_, err = clientConnection.Write(packetData)
   if err != nil {
-    fmt.Println(err)
+    errlog.Println(err)
   }
 
 }
@@ -116,7 +125,7 @@ func (p *Proxy) Start() error {
       packetData := make([]byte, 65535)
       n, _, err := syscall.Recvfrom(rawTCPSocket, packetData, 0)
       if err != nil {
-        fmt.Println(err)
+        errlog.Println(err)
         break
       }
       packetData = packetData[:n]
@@ -164,7 +173,7 @@ func (p *Proxy) run(listener net.TCPListener) {
       if (la == nil) {
         panic("Connection lost!")
       }
-      fmt.Printf("Connection from %s to %s\n", la.String(), clientConnection.RemoteAddr().String())
+      infolog.Printf("Connection from %s to %s\n", la.String(), clientConnection.RemoteAddr().String())
 
       if err == nil {
 	clientIP = clientConnection.RemoteAddr().String()
@@ -227,9 +236,9 @@ func handleRepliesFromSiteConn(siteConnection net.Conn, originalIP net.IP, origi
     _, err := siteConnection.Read(packetBuffer)
     if err != nil {
       if err == io.EOF {
-        time.Sleep(time.Second * 2) // Wait for FIN packets to pass.
+        time.Sleep(time.Second * 20) // Wait for FIN packets to pass.
       } else {
-        fmt.Println(err)
+        errlog.Println(err)
       }
       break
     }
@@ -273,45 +282,46 @@ func (p *Proxy) handle(conn net.Conn) {
     n, err := conn.Read(tmp)
     if err != nil {
       if err != io.EOF {
-            fmt.Println("read error:", err)
-        }
-        break
+        errlog.Println("read error:", err)
+      }
+      break
     }
-    fmt.Println("got", n, "bytes.")
+    infolog.Println("got", n, "bytes.")
     buf = append(buf, tmp[:n]...)
     header, err := ipv4.ParseHeader(buf)
     if err != nil {
-      fmt.Println("Couldn't parse packet, dropping connnection.")
+      infolog.Println("Couldn't parse packet, dropping connnection.")
       return
     }
     if header.TotalLen == 0 && len(buf) > 0 {
-      fmt.Println("Buffer is not parserable!")
+      errlog.Println("Buffer is not parserable!")
       return
     }
     if (header.TotalLen > len(buf)) {
-      fmt.Println("Reading more up to %d\n", header.TotalLen)
+      infolog.Println("Reading more up to %d\n", header.TotalLen)
       continue
     }
 
     packetData := buf[0:header.TotalLen]
 
-    fmt.Printf("PACKET LEN:%d, bufLen:%d\n", header.TotalLen, len(buf))
+    infolog.Printf("PACKET LEN:%d, bufLen:%d\n", header.TotalLen, len(buf))
 
     buf = buf[header.TotalLen:]
 
     packet, err := parseTCP.ParseTCPPacket(packetData)
-    ip := packet.IP
-    tcp := packet.TCP
     if err != nil {
-      fmt.Println(err)
+      errlog.Println(err)
+      errlog.Println(hex.Dump(packetData))
       return
     }
-    fmt.Println("RECEIVED:")
+    ip := packet.IP
+    tcp := packet.TCP
+    infolog.Println("RECEIVED FROM CLIENT:")
     packet.Print(100)
 
     dstIP := ip.DstIP
     if isLocalIP(dstIP.String()) {
-      fmt.Printf("DESTINATION IS SELF: %s\n", dstIP.String())
+      infolog.Printf("DESTINATION IS SELF: %s\n", dstIP.String())
       return
     }
 
@@ -327,7 +337,7 @@ func (p *Proxy) handle(conn net.Conn) {
     closeSiteConnection := func(siteConnection net.Conn) {
 
       srcPort := getSrcPortFromConnection(siteConnection)
-      fmt.Printf("CLOSE CONNECTION for port %s\n", srcPort)
+      infolog.Printf("CLOSE CONNECTION for port %s\n", srcPort)
       delete(openPortToClientAddr, srcPort)
       siteConnection.Close()
       delete(srcToSiteConn, src)
@@ -354,8 +364,9 @@ func (p *Proxy) handle(conn net.Conn) {
       )
       outgoingPacket := buffer.Bytes()
       _, err = io.Copy(clientConnection, bytes.NewReader(outgoingPacket))
+      //_, err = clientConnection.Write(outgoingPacket)
       if err != nil {
-        fmt.Println(err)
+        errlog.Println(err)
       }
 
     }
@@ -367,30 +378,35 @@ func (p *Proxy) handle(conn net.Conn) {
       siteConnection = nil
     }
     if siteConnection == nil {
-      fmt.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
-      fmt.Printf("Dialing %s...\n", dst)
+      infolog.Printf("No con for %s,\n%v\n", src, srcToSiteConn)
+      infolog.Printf("Dialing %s...\n", dst)
       siteConnection, err := net.Dial("tcp", dst)
       if err != nil {
-        fmt.Println(err)
+        errlog.Println(err)
         return
       }
       if siteConnection == nil {
-        fmt.Println("Site con is nil")
+        errlog.Println("Site con is nil")
         return
       }
       srcToSiteConn[src] = siteConnection
       openPort := getSrcPortFromConnection(siteConnection)
       openPortToClientAddr[openPort] = clientAddr{ ip: savedIP, port: savedPort }
-      fmt.Printf("Added %s to open ports\n", openPort)
-      processPacket(openPortToSynAck[openPort])
+      infolog.Printf("Added %s to open ports\n", openPort)
+      synack, ok := openPortToSynAck[openPort]
+      if ok {
+	delete(openPortToSynAck, openPort)
+	infolog.Println("Process saved synack")
+	processPacket(synack)
+      }
 
       go handleRepliesFromSiteConn(siteConnection, savedIP, savedPort, src, closeSiteConnection)
     } else {
-      fmt.Println("Sending payload to site...")
+      infolog.Println("Sending payload to site...")
       packet.Print(100)
       _, err = io.Copy(siteConnection, bytes.NewReader(tcp.Payload))
       if err != nil {
-        fmt.Println(err)
+        errlog.Println(err)
         closeSiteConnection(siteConnection)
       }
     }
@@ -438,12 +454,12 @@ func main() {
     signal.Notify(controlC, os.Interrupt)
     go func(){
       <-controlC
-      fmt.Println("Exiting after Ctrl+C")
+      infolog.Println("Exiting after Ctrl+C")
       os.Exit(0)
     }()
 
     flag.Parse();
-    log.SetLevel(log.InfoLevel)
+    logrus.SetLevel(logrus.InfoLevel)
 
     p := NewProxy(*remoteAddr)
 
@@ -453,6 +469,6 @@ func main() {
 
     p.Start()
 
-    fmt.Println("Server started.")
+    infolog.Println("Server started.")
     select{}
 }
