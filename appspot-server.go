@@ -6,9 +6,6 @@ import (
   "net/http"
   "os"
   "io"
-  "errors"
-
-  "golang.org/x/net/ipv4"
 )
 
 var infolog = log.New(os.Stdout,
@@ -19,9 +16,11 @@ var errlog = log.New(os.Stderr,
 
 func main() {
   http.HandleFunc("/", handle)
-  http.HandleFunc("/iptables", iptablesHandler)
-  log.Print("Listening on port 8080")
-  infolog.Fatal(http.ListenAndServe(":8080", nil))
+  http.HandleFunc("/iptables-up", iptablesUpHandler)
+  http.HandleFunc("/iptables-down", iptablesDownHandler)
+  port := os.Getenv("PORT")
+  infolog.Print("Listening on port", port)
+  infolog.Fatal(http.ListenAndServe(":" + port, nil))
 }
 
 func handle(w http.ResponseWriter, r *http.Request) {
@@ -36,17 +35,24 @@ func handle(w http.ResponseWriter, r *http.Request) {
 func readBody(body io.ReadCloser, errchan chan error) {
   buf := make([]byte, 0, 65535) // big buffer
   tmp := make([]byte, 4096)     // using small tmo buffer for demonstrating
+  infolog.Println("Diving into read body loop.")
   for {
     n, err := body.Read(tmp)
+    if n > 0 {
+      infolog.Println("Got", n, "bytes from POST body.")
+      buf = append(buf, tmp[:n]...)
+      infolog.Println("BUFFERED FROM SERVER:", string(buf))
+    }
     if err != nil {
       if err != io.EOF {
         errlog.Println("read error:", err)
       }
+      infolog.Println("Writing to channel...")
       errchan <- err
+      infolog.Println("Done.")
       return
     }
-    infolog.Println("Got", n, "bytes from POST body.")
-    buf = append(buf, tmp[:n]...)
+    /*
     header, err := ipv4.ParseHeader(buf)
     if err != nil {
       infolog.Println("Couldn't parse packet, dropping connnection.")
@@ -67,23 +73,25 @@ func readBody(body io.ReadCloser, errchan chan error) {
 
     infolog.Printf("PACKET LEN:%d, bufLen:%d\n", header.TotalLen, len(buf))
 
-    buf = buf[header.TotalLen:]
+    return
+    //buf = buf[header.TotalLen:]
+    */
   }
 
 }
 
 func writeResponse(w http.ResponseWriter, errchan chan error) {
-  for {
-    fmt.Fprintf(w, "Hello, try posting after me!")
-  }
+  fmt.Fprintf(w, "Hello and bye!")
+  infolog.Println("Response was written.")
 }
 
-
-func iptablesHandler(w http.ResponseWriter, r *http.Request) {
+func iptablesUpHandler(w http.ResponseWriter, r *http.Request) {
   if r.Method != "POST" {
     fmt.Fprint(w, "Try POST method!")
     return
   }
+
+  infolog.Println("IPTABLES!")
 
   userSecret := r.URL.Query().Get("user-secret")
   if userSecret == "" {
@@ -91,10 +99,13 @@ func iptablesHandler(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  errchan := make(chan error)
-  go readBody(r.Body, errchan)
-  go writeResponse(w, errchan)
+  errchan := make(chan error, 1)
+  readBody(r.Body, errchan)
   var err error
   err = <- errchan
   errlog.Println("FINITA:", err)
+}
+
+func iptablesDownHandler(w http.ResponseWriter, r *http.Request) {
+  
 }
